@@ -5,6 +5,9 @@ import ci.jinx.qr_code.models.User;
 import ci.jinx.qr_code.qrcode.dto.QrCodeRequest;
 import ci.jinx.qr_code.qrcode.dto.QrCodeResponse;
 import ci.jinx.qr_code.repository.QrCodeTypeRepository;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.security.SecurityRequirement;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,6 +29,8 @@ import java.util.Map;
 @RequestMapping("/api/v1/qrcode")
 @RequiredArgsConstructor
 @CrossOrigin(origins = "*")
+@Tag(name = "QR Code", description = "Génération, historique et gestion des QR codes")
+@SecurityRequirement(name = "Bearer Authentication")
 public class QrCodeController {
 
     private final QrCodeService qrCodeService;
@@ -34,6 +39,7 @@ public class QrCodeController {
     @Value("${app.upload-dir}")
     private String uploadDir;
 
+    @Operation(summary = "Générer un QR code")
     @PostMapping("/generate")
     public ResponseEntity<QrCodeResponse> generate(
             @Valid @RequestBody QrCodeRequest request,
@@ -45,6 +51,7 @@ public class QrCodeController {
         return ResponseEntity.ok(response);
     }
 
+    @Operation(summary = "Historique complet des QR codes")
     @GetMapping("/history")
     public ResponseEntity<List<QrCodeResponse>> getHistory(
             @AuthenticationPrincipal User user) {
@@ -53,6 +60,7 @@ public class QrCodeController {
         return ResponseEntity.ok(history);
     }
 
+    @Operation(summary = "Historique filtré par type (URL, TEXT, EMAIL, WIFI, VCARD)")
     @GetMapping("/history/{type}")
     public ResponseEntity<List<QrCodeResponse>> getHistoryByType(
             @PathVariable String type,
@@ -63,6 +71,7 @@ public class QrCodeController {
         return ResponseEntity.ok(history);
     }
 
+    @Operation(summary = "Statistiques par type de QR code")
     @GetMapping("/stats")
     public ResponseEntity<Map<String, Long>> getStats(
             @AuthenticationPrincipal User user) {
@@ -71,6 +80,7 @@ public class QrCodeController {
         return ResponseEntity.ok(stats);
     }
 
+    @Operation(summary = "Liste des types de QR codes disponibles", security = {})
     @GetMapping("/types")
     public ResponseEntity<List<QrCodeType>> getTypes() {
         log.info("GET /api/qrcode/types");
@@ -78,6 +88,7 @@ public class QrCodeController {
         return ResponseEntity.ok(types);
     }
 
+    @Operation(summary = "Supprimer un QR code")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(
             @PathVariable Long id,
@@ -87,6 +98,7 @@ public class QrCodeController {
         return ResponseEntity.noContent().build();
     }
 
+    @Operation(summary = "Accéder à une image QR code (PNG ou SVG)", security = {})
     @GetMapping("/images/{filename:.+}")
     public ResponseEntity<Resource> serveImage(@PathVariable String filename) {
         log.info("GET /api/v1/qrcode/images/{}", filename);
