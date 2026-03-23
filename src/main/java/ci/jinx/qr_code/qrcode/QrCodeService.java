@@ -19,17 +19,21 @@ import com.google.zxing.qrcode.QRCodeWriter;
 import com.google.zxing.qrcode.decoder.ErrorCorrectionLevel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.awt.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Base64;
-import java.util.Base64.Decoder;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import javax.imageio.ImageIO;
 
 @Slf4j
@@ -37,9 +41,18 @@ import javax.imageio.ImageIO;
 @RequiredArgsConstructor
 public class QrCodeService {
 
+    private static final int FOREGROUND_COLOR = 0xFF000000;
+    private static final int BACKGROUND_COLOR = 0xFFFFFFFF;
+
     private final QrCodeRepository qrCodeRepository;
     private final ObjectMapper objectMapper;
     private final QrCodeTypeRepository qrCodeTypeRepository;
+
+    @Value("${app.base-url}")
+    private String baseUrl;
+
+    @Value("${app.upload-dir}")
+    private String uploadDir;
 
     public QrCodeResponse generate(QrCodeRequest request, User user) {
         log.info("Génération QR code type {} pour {}", request.getContentType(), user.getEmail());
@@ -50,17 +63,18 @@ public class QrCodeService {
 
             BitMatrix bitMatrix = generateBitMatrix(content, request.getSize());
 
-            int foregroundColor = hexToInt(request.getForegroundColor());
-            int backgroundColor = hexToInt(request.getBackgroundColor());
-
-            byte[] pngImage = generatePng(bitMatrix, foregroundColor, backgroundColor);
+            byte[] pngBytes = generatePng(bitMatrix);
 
             if (request.getLogoBase64() != null && !request.getLogoBase64().isEmpty()) {
-                pngImage = addLogoToPng(pngImage, request.getLogoBase64());
+                pngBytes = addLogoToPng(pngBytes, request.getLogoBase64());
                 log.debug("Logo ajouté au QR code");
             }
 
-            String svgImage = generateSvg(bitMatrix, request);
+            String svgContent = generateSvg(bitMatrix);
+
+            String uuid = UUID.randomUUID().toString();
+            String pngUrl = saveFile(uuid + ".png", pngBytes, "image/png");
+            String svgUrl = saveFile(uuid + ".svg", svgContent.getBytes(), "image/svg+xml");
 
             String contentDataJson = objectMapper.writeValueAsString(request.getContentData());
 
@@ -68,11 +82,9 @@ public class QrCodeService {
                     .user(user)
                     .contentType(request.getContentType().toUpperCase())
                     .contentData(contentDataJson)
-                    .foregroundColor(request.getForegroundColor())
-                    .backgroundColor(request.getBackgroundColor())
                     .size(request.getSize())
-                    .pngImage(pngImage)
-                    .svgImage(svgImage)
+                    .pngUrl(pngUrl)
+                    .svgUrl(svgUrl)
                     .build();
 
             if (request.getLogoBase64() != null && !request.getLogoBase64().isEmpty()) {
@@ -84,7 +96,7 @@ public class QrCodeService {
             QrCode saved = qrCodeRepository.save(qrCode);
             log.info("QR code sauvegardé avec l'id : {}", saved.getId());
 
-            return buildResponse(saved, pngImage, svgImage);
+            return buildResponse(saved);
 
         } catch (Exception e) {
             log.error("Erreur lors de la génération du QR code : {}", e.getMessage());
@@ -95,26 +107,18 @@ public class QrCodeService {
     public List<QrCodeResponse> getHistory(User user) {
         log.info("Récupération historique complet pour : {}", user.getEmail());
 
-        List<QrCode> qrCodes = qrCodeRepository
-                .findByUserIdOrderByCreatedAtDesc(user.getId());
-
+        List<QrCode> qrCodes = qrCodeRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
         log.info("{} QR codes trouvés pour {}", qrCodes.size(), user.getEmail());
 
-        return qrCodes.stream()
-                .map(qrCode -> buildResponse(
-                        qrCode,
-                        qrCode.getPngImage(),
-                        qrCode.getSvgImage()))
-                .toList();
+        return qrCodes.stream().map(this::buildResponse).toList();
     }
 
     public List<QrCodeResponse> getHistoryByType(User user, String contentType) {
         log.info("Récupération historique type {} pour : {}", contentType, user.getEmail());
 
-        //List<String> validTypes = List.of("URL", "TEXT", "EMAIL", "WIFI", "VCARD");
         String type = contentType.toUpperCase();
 
-        if (!qrCodeTypeRepository.existsByCodeAndIsActiveTrue(contentType.toUpperCase())) {
+        if (!qrCodeTypeRepository.existsByCodeAndIsActiveTrue(type)) {
             log.warn("Type invalide demandé : {}", contentType);
             throw new RuntimeException("Type invalide ou désactivé : " + contentType);
         }
@@ -122,22 +126,15 @@ public class QrCodeService {
         List<QrCode> qrCodes = qrCodeRepository
                 .findByUserIdAndContentTypeOrderByCreatedAtDesc(user.getId(), type);
 
-        log.info("{} QR codes de type {} trouvés pour {}",
-                qrCodes.size(), type, user.getEmail());
+        log.info("{} QR codes de type {} trouvés pour {}", qrCodes.size(), type, user.getEmail());
 
-        return qrCodes.stream()
-                .map(qrCode -> buildResponse(
-                        qrCode,
-                        qrCode.getPngImage(),
-                        qrCode.getSvgImage()))
-                .toList();
+        return qrCodes.stream().map(this::buildResponse).toList();
     }
 
     public Map<String, Long> getStatsByType(User user) {
         log.info("Récupération stats par type pour : {}", user.getEmail());
 
-        List<QrCode> allQrCodes = qrCodeRepository
-                .findByUserIdOrderByCreatedAtDesc(user.getId());
+        List<QrCode> allQrCodes = qrCodeRepository.findByUserIdOrderByCreatedAtDesc(user.getId());
 
         Map<String, Long> stats = allQrCodes.stream()
                 .collect(java.util.stream.Collectors.groupingBy(
@@ -154,11 +151,36 @@ public class QrCodeService {
         QrCode qrCode = qrCodeRepository.findByIdAndUserId(id, user.getId())
                 .orElseThrow(() -> new RuntimeException("QR code non trouvé"));
 
+        // Suppression des fichiers associés
+        deleteFileFromUrl(qrCode.getPngUrl());
+        deleteFileFromUrl(qrCode.getSvgUrl());
+
         qrCodeRepository.delete(qrCode);
         log.info("QR code supprimé avec succès");
     }
 
     // ---- Méthodes privées ----
+
+    private String saveFile(String filename, byte[] data, String contentType) throws IOException {
+        Path dir = Paths.get(uploadDir);
+        Files.createDirectories(dir);
+        Path filePath = dir.resolve(filename);
+        Files.write(filePath, data);
+        log.debug("Fichier sauvegardé : {}", filePath);
+        return baseUrl + "/api/v1/qrcode/images/" + filename;
+    }
+
+    private void deleteFileFromUrl(String url) {
+        if (url == null) return;
+        String filename = url.substring(url.lastIndexOf('/') + 1);
+        try {
+            Path filePath = Paths.get(uploadDir).resolve(filename);
+            Files.deleteIfExists(filePath);
+            log.debug("Fichier supprimé : {}", filePath);
+        } catch (IOException e) {
+            log.warn("Impossible de supprimer le fichier : {}", filename);
+        }
+    }
 
     private String buildContent(QrCodeRequest request) throws Exception {
         String type = request.getContentType().toUpperCase();
@@ -221,16 +243,14 @@ public class QrCodeService {
         return writer.encode(content, BarcodeFormat.QR_CODE, size, size, hints);
     }
 
-    private byte[] generatePng(BitMatrix bitMatrix, int foreground, int background)
-            throws IOException {
-        MatrixToImageConfig config = new MatrixToImageConfig(foreground, background);
+    private byte[] generatePng(BitMatrix bitMatrix) throws IOException {
+        MatrixToImageConfig config = new MatrixToImageConfig(FOREGROUND_COLOR, BACKGROUND_COLOR);
         ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
         MatrixToImageWriter.writeToStream(bitMatrix, "PNG", outputStream, config);
         return outputStream.toByteArray();
     }
 
     private byte[] addLogoToPng(byte[] pngImage, String logoBase64) throws IOException {
-
         String cleanBase64 = logoBase64.replaceAll("data:image/[^;]+;base64,", "");
         byte[] logoBytes = Base64.getDecoder().decode(cleanBase64);
 
@@ -257,7 +277,7 @@ public class QrCodeService {
         return outputStream.toByteArray();
     }
 
-    private String generateSvg(BitMatrix bitMatrix, QrCodeRequest request) {
+    private String generateSvg(BitMatrix bitMatrix) {
         int size = bitMatrix.getWidth();
         int pixelSize = 10;
 
@@ -269,18 +289,14 @@ public class QrCodeService {
                 """,
                 size * pixelSize, size * pixelSize,
                 size * pixelSize, size * pixelSize));
-        svg.append(String.format(
-                "<rect width=\"100%%\" height=\"100%%\" fill=\"%s\"/>%n",
-                request.getBackgroundColor()));
+        svg.append("<rect width=\"100%\" height=\"100%\" fill=\"#FFFFFF\"/>\n");
 
         for (int y = 0; y < size; y++) {
             for (int x = 0; x < size; x++) {
                 if (bitMatrix.get(x, y)) {
                     svg.append(String.format(
-                            "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"%s\"/>%n",
-                            x * pixelSize, y * pixelSize,
-                            pixelSize, pixelSize,
-                            request.getForegroundColor()));
+                            "<rect x=\"%d\" y=\"%d\" width=\"%d\" height=\"%d\" fill=\"#000000\"/>\n",
+                            x * pixelSize, y * pixelSize, pixelSize, pixelSize));
                 }
             }
         }
@@ -289,25 +305,15 @@ public class QrCodeService {
         return svg.toString();
     }
 
-    private QrCodeResponse buildResponse(QrCode qrCode, byte[] pngImage, String svgImage) {
-        String pngBase64 = pngImage != null ? Base64.getEncoder().encodeToString(pngImage) : null;
-        String svgBase64 = svgImage != null ? Base64.getEncoder().encodeToString(svgImage.getBytes()) : null;
-
+    private QrCodeResponse buildResponse(QrCode qrCode) {
         return QrCodeResponse.builder()
                 .id(qrCode.getId())
                 .contentType(qrCode.getContentType())
                 .contentData(qrCode.getContentData())
-                .foregroundColor(qrCode.getForegroundColor())
-                .backgroundColor(qrCode.getBackgroundColor())
                 .size(qrCode.getSize())
-                .pngBase64(pngBase64)
-                .svgBase64(svgBase64)
+                .pngUrl(qrCode.getPngUrl())
+                .svgUrl(qrCode.getSvgUrl())
                 .createdAt(qrCode.getCreatedAt())
                 .build();
-    }
-
-    private int hexToInt(String hex) {
-        return (int) Long.parseLong(hex.replace("#", "FF"), 16);
-
     }
 }

@@ -8,6 +8,7 @@ import lombok.NoArgsConstructor;
 import io.hypersistence.utils.hibernate.type.json.JsonType;
 import org.hibernate.annotations.Type;
 import java.time.LocalDateTime;
+
 @Data
 @Builder
 @NoArgsConstructor
@@ -15,6 +16,7 @@ import java.time.LocalDateTime;
 @Entity
 @Table(name = "qr_codes")
 public class QrCode {
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -23,20 +25,12 @@ public class QrCode {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    
     @Column(name = "content_type", nullable = false)
     private String contentType;
 
     @Type(JsonType.class)
-@Column(name = "content_data", nullable = false, columnDefinition = "jsonb")
-private String contentData;
-
-
-    @Column(name = "foreground_color")
-    private String foregroundColor;
-
-    @Column(name = "background_color")
-    private String backgroundColor;
+    @Column(name = "content_data", nullable = false, columnDefinition = "jsonb")
+    private String contentData;
 
     @Column(name = "size")
     private Integer size;
@@ -44,12 +38,11 @@ private String contentData;
     @Column(name = "logo_image")
     private byte[] logoImage;
 
+    @Column(name = "png_url")
+    private String pngUrl;
 
-    @Column(name = "png_image")
-    private byte[] pngImage;
-
-    @Column(name = "svg_image", columnDefinition = "TEXT")
-    private String svgImage;
+    @Column(name = "svg_url")
+    private String svgUrl;
 
     @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
@@ -57,9 +50,6 @@ private String contentData;
     @PrePersist
     protected void onCreate() {
         this.createdAt = LocalDateTime.now();
-        if (this.foregroundColor == null) this.foregroundColor = "#000000";
-        if (this.backgroundColor == null) this.backgroundColor = "#FFFFFF";
         if (this.size == null) this.size = 300;
     }
-    
 }

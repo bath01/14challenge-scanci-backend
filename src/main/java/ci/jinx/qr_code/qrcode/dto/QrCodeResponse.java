@@ -16,12 +16,8 @@ public class QrCodeResponse {
     private Long id;
     private String contentType;
     private String contentData;
-
-    private String foregroundColor;
-    private String backgroundColor;
     private Integer size;
-    private String pngBase64;
-    private String svgBase64;
-
+    private String pngUrl;
+    private String svgUrl;
     private LocalDateTime createdAt;
 }

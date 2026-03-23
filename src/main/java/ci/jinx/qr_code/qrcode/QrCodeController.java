@@ -8,10 +8,16 @@ import ci.jinx.qr_code.repository.QrCodeTypeRepository;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Map;
 
@@ -24,6 +30,9 @@ public class QrCodeController {
 
     private final QrCodeService qrCodeService;
     private final QrCodeTypeRepository qrCodeTypeRepository;
+
+    @Value("${app.upload-dir}")
+    private String uploadDir;
 
     @PostMapping("/generate")
     public ResponseEntity<QrCodeResponse> generate(
@@ -76,6 +85,22 @@ public class QrCodeController {
         log.info("DELETE /api/qrcode/{} — user : {}", id, user.getEmail());
         qrCodeService.delete(id, user);
         return ResponseEntity.noContent().build();
+    }
 
+    @GetMapping("/images/{filename:.+}")
+    public ResponseEntity<Resource> serveImage(@PathVariable String filename) {
+        log.info("GET /api/v1/qrcode/images/{}", filename);
+        Path filePath = Paths.get(uploadDir).resolve(filename);
+        Resource resource = new FileSystemResource(filePath);
+
+        if (!resource.exists()) {
+            return ResponseEntity.notFound().build();
+        }
+
+        MediaType mediaType = filename.endsWith(".svg")
+                ? MediaType.parseMediaType("image/svg+xml")
+                : MediaType.IMAGE_PNG;
+
+        return ResponseEntity.ok().contentType(mediaType).body(resource);
     }
 }
